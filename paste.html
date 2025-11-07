@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>הדבקת תרגילים לאימון</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Axios CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+  <h1>הדבקת תרגילים</h1>
+
+  <p>
+    הדבק כאן טבלת Markdown בפורמט הבא (אל תכלול את שורת הכותרת ואת שורת המפריד):
+  </p>
+  <pre style="white-space: pre-wrap; font-family: ui-monospace, Menlo, Consolas, monospace;">
+| קבוצת שרירים | שם תרגיל בעברית | שם תרגיל באנגלית | חזרות או זמן מומלץ | הוראות ביצוע מפורטות עם הדגשים |
+| ------------ | ---------------- | ----------------- | ------------------- | -------------------------------- |
+| ...          | ...              | ...               | ...                 | ...                              |
+  </pre>
+
+  <label for="mdInput">הדבק כאן את הטבלה:</label><br/>
+  <textarea id="mdInput" rows="14" style="width:100%;"></textarea>
+
+  <div style="margin-top:12px;">
+    <button id="insertBtn">הכנס תרגילים לאימון</button>
+    <button id="cancelBtn">בטל</button>
+  </div>
+
+  <div id="status" style="margin-top:12px;"></div>
+
+  <script src="./paste.js"></script>
+</body>
+</html>
