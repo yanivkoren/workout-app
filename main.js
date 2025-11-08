@@ -1,11 +1,9 @@
-// main.js
-// ==============================================
-// לוגיקת מסך הפתיחה – שליפת אימונים, סינון, מיון ויצירה חדשה
-// ==============================================
+// הקובץ מניח ש-config.js נטען לפניו ומספק את המשתנה http
 
-// ========= DOM refs =========
+// ===== DOM refs =====
 const filtersForm  = document.getElementById('filtersForm');
 const onlyUndated  = document.getElementById('onlyUndated');
+const statusSelect = document.getElementById('statusSelect');
 const typeSelect   = document.getElementById('typeSelect');
 const dateFrom     = document.getElementById('dateFrom');
 const dateTo       = document.getElementById('dateTo');
@@ -19,31 +17,62 @@ const summaryEl    = document.getElementById('summary');
 const resultsBody  = document.getElementById('resultsBody');
 const logEl        = document.getElementById('log');
 
-// ========= בניית שאילתת GET ל-workouts =========
-function buildQuery() {
+// ===== Utils =====
+function fmtDate(d) {
+  if (!d) return '—';
+  return String(d).slice(0, 10);
+}
+
+function summarize() {
+  const parts = [];
+  parts.push(onlyUndated.checked ? 'מוצגים גם לא מתוזמנים' : 'מוצגים רק מתוזמנים');
+  if (statusSelect.value) parts.push(`סטטוס: ${statusSelect.value}`);
+  if (typeSelect.value) parts.push(`סוג: ${typeSelect.value}`);
+  if (dateFrom.value && !onlyUndated.checked) parts.push(`מ־${dateFrom.value}`);
+  if (dateTo.value && !onlyUndated.checked) parts.push(`עד ${dateTo.value}`);
+  if (searchName.value.trim()) parts.push(`חיפוש: "${searchName.value.trim()}"`);
+  parts.push(`מיון: ${sortField.value} (${sortDir.value})`);
+  summaryEl.textContent = parts.join(' | ');
+}
+
+function buildParams() {
   const p = new URLSearchParams();
+  p.append('select', 'id,name,type,workout_date,state');
 
-  // אילו עמודות להביא
-  p.append('select', 'id,name,type,workout_date');
-
-  // חיפוש בשם אימון
+  // חיפוש בשם
   const term = (searchName.value || '').trim();
-  if (term) {
-    p.append('name', `ilike.%${term}%`);
-  }
+  if (term) p.append('name', `ilike.%${term}%`);
 
-  // סינון סוג אימון
-  const typeVal = typeSelect.value;
-  if (typeVal) {
-    p.append('type', `eq.${typeVal}`);
-  }
+  // סוג אימון
+  if (typeSelect.value) p.append('type', `eq.${typeSelect.value}`);
 
-  // סינון לפי תאריך
+  // סטטוס
+  if (statusSelect.value) p.append('state', `eq.${statusSelect.value}`);
+
+  const f = dateFrom.value;
+  const t = dateTo.value;
+
   if (onlyUndated.checked) {
-    p.append('workout_date', 'is.null');
+    // מציגים גם לא-מתוזמנים:
+    // or = (workout_date.is.null, [טווח תאריכים אם סופק])
+    const orClauses = ['workout_date.is.null'];
+
+    // אם סופק טווח, נוסיף את הצד "עם תאריך בטווח"
+    if (f && t) {
+      orClauses.push(`and(workout_date.gte.${f},workout_date.lte.${t})`);
+    } else if (f) {
+      orClauses.push(`workout_date.gte.${f}`);
+    } else if (t) {
+      orClauses.push(`workout_date.lte.${t}`);
+    }
+    // אם לא סופק כלל טווח — נשאר רק is.null, כלומר כל הלא-מתוזמנים + כל המתוזמנים (כי אין טווח),
+    // לכן נוותר בכלל על ה-or כדי לא לחסום מתוזמנים.
+    if (orClauses.length > 1) {
+      p.append('or', `(${orClauses.join(',')})`);
+    }
   } else {
-    const f = dateFrom.value;
-    const t = dateTo.value;
+    // מציגים רק מתוזמנים: חייב תאריך + כבד טווח אם יש
+    p.append('workout_date', 'not.is.null');
     if (f) p.append('workout_date', `gte.${f}`);
     if (t) p.append('workout_date', `lte.${t}`);
   }
@@ -53,103 +82,43 @@ function buildQuery() {
   return p;
 }
 
-// ========= שליפת אימונים =========
+
 async function fetchWorkouts() {
-  clearLog(logEl);
-  resultsBody.innerHTML = '';
-  showStatus('טוען...', summaryEl);
-
   try {
-    const rangeHeaders = { 'Range': '0-199' };
-    const q = buildQuery().toString();
-    const url = `/workouts?${q}`;
-
-    const { data, headers } = await http.get(url, { headers: rangeHeaders });
-
-    // ספירת רשומות מתוך Content-Range
-    let total = 0;
-    const cr = headers['content-range'];
-    if (cr) {
-      const m = cr.match(/\/(\d+)$/);
-      if (m) total = Number(m[1]);
-    } else {
-      total = Array.isArray(data) ? data.length : 0;
-    }
-
-    renderWorkouts(Array.isArray(data) ? data : []);
-    showStatus(`נמצאו ${total} אימונים.`, summaryEl);
+    summarize();
+    const params = buildParams();
+    const { data } = await http.get('/workouts', { params });
+    renderRows(data || []);
+    logEl.textContent = `GET /workouts?${params.toString()}\nתוצאות: ${data?.length ?? 0}`;
   } catch (err) {
-    showStatus('אירעה שגיאה בעת שליפת האימונים.', summaryEl);
-    showError(err, logEl);
+    console.error(err);
+    logEl.textContent = `שגיאה: ${err?.message || err}`;
   }
 }
 
-// ========= רינדור טבלה =========
-function renderWorkouts(rows) {
+function renderRows(rows) {
   resultsBody.innerHTML = '';
-  for (const w of rows) {
+  for (const r of rows) {
     const tr = document.createElement('tr');
 
-    const tdId   = document.createElement('td');
-    const tdName = document.createElement('td');
-    const tdType = document.createElement('td');
-    const tdDate = document.createElement('td');
-    const tdAct  = document.createElement('td');
-
-    tdId.textContent   = w.id;
-    tdName.textContent = w.name || '';
-    tdType.textContent = w.type || '';
-    tdDate.textContent = w.workout_date || '—';
-
-    const btnPlay = document.createElement('button');
-    btnPlay.type = 'button';
-    btnPlay.textContent = 'ביצוע אימון';
-    btnPlay.className = 'btn btn-sm btn-outline-success me-1';
-    btnPlay.addEventListener('click', () => {
-      window.location.href = `play.html?id=${encodeURIComponent(w.id)}`;
-    });
-
-    const btnEdit = document.createElement('button');
-    btnEdit.type = 'button';
-    btnEdit.textContent = 'עריכת אימון';
-    btnEdit.className = 'btn btn-sm btn-outline-primary';
-    btnEdit.addEventListener('click', () => {
-      window.location.href = `edit.html?id=${encodeURIComponent(w.id)}`;
-    });
-
-    tdAct.appendChild(btnPlay);
-    tdAct.appendChild(btnEdit);
-
-    tr.append(tdId, tdName, tdType, tdDate, tdAct);
+    tr.innerHTML = `
+      <td>${r.id}</td>
+      <td>${r.name || ''}</td>
+      <td>${r.type || ''}</td>
+      <td>${fmtDate(r.workout_date)}</td>
+      <td>${r.state || ''}</td>
+      <td>
+        <div class="btn-group btn-group-sm" role="group">
+          <a class="btn btn-outline-primary" href="edit.html?id=${encodeURIComponent(r.id)}">עריכה</a>
+          <a class="btn btn-outline-success" href="play.html?id=${encodeURIComponent(r.id)}">ביצוע</a>
+        </div>
+      </td>
+    `;
     resultsBody.appendChild(tr);
   }
 }
 
-// ========= יצירת אימון חדש =========
-async function createNewWorkout() {
-  clearLog(logEl);
-  try {
-    const payload = {
-      name: 'אימון חדש',
-      type: 'אימון ליבה',
-      workout_date: null
-    };
-    const { data } = await http.post('/workouts', payload, {
-      headers: { Prefer: 'return=representation' }
-    });
-    const created = Array.isArray(data) ? data[0] : data;
-    if (created && created.id) {
-      window.location.href = `edit.html?id=${encodeURIComponent(created.id)}`;
-    } else {
-      throw new Error('נוצר אימון אך לא התקבל מזהה לחיווי.');
-    }
-  } catch (err) {
-    showError(err, logEl);
-    alert('יצירת אימון נכשלה. ראה פירוט בלוג.');
-  }
-}
-
-// ========= מאזינים =========
+// ===== מאזינים =====
 filtersForm.addEventListener('submit', (e) => {
   e.preventDefault();
   fetchWorkouts();
@@ -157,6 +126,7 @@ filtersForm.addEventListener('submit', (e) => {
 
 resetBtn.addEventListener('click', () => {
   onlyUndated.checked = true;
+  statusSelect.value = '';
   typeSelect.value = '';
   dateFrom.value = '';
   dateTo.value = '';
@@ -166,8 +136,14 @@ resetBtn.addEventListener('click', () => {
   fetchWorkouts();
 });
 
-onlyUndated.addEventListener('change', () => fetchWorkouts());
-newBtn.addEventListener('click', createNewWorkout);
+[
+  onlyUndated, statusSelect, typeSelect,
+  dateFrom, dateTo, searchName, sortField, sortDir
+].forEach(el => el.addEventListener('change', fetchWorkouts));
 
-// טעינה ראשונית
+newBtn.addEventListener('click', () => {
+  window.location.href = 'edit.html';
+});
+
+// ===== טעינה ראשונית =====
 fetchWorkouts();

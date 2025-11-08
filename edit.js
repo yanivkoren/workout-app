@@ -14,6 +14,7 @@ function getQueryParam(name) {
 const wNameEl   = document.getElementById('wName');
 const wTypeEl   = document.getElementById('wType');
 const wDateEl   = document.getElementById('wDate');
+const wStateEl  = document.getElementById('wState');
 
 const saveBtn   = document.getElementById('saveBtn');
 const delBtn    = document.getElementById('deleteBtn');
@@ -26,7 +27,15 @@ const exBody    = document.getElementById('exBody');
 const logEl     = document.getElementById('log');
 
 const workoutId = getQueryParam('id');
-const pendingDeletes = new Set(); // exercise ids לסימון למחיקה בשמירה
+const pendingDeletes = new Set(); // exercise ids למחיקה בשמירה
+
+// ---- עזר: תאריך היום YYYY-MM-DD (לפי זמן הדפדפן) ----
+function todayISO() {
+  const d = new Date();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
 
 // ---- טעינה ראשית ----
 (async function init() {
@@ -39,16 +48,17 @@ const pendingDeletes = new Set(); // exercise ids לסימון למחיקה בש
   clearLog(logEl);
 
   try {
-    // 1) טען כותרת אימון
+    // 1) טען כותרת אימון (כולל state)
     const { data: workoutArr } = await http.get(
-      `/workouts?select=id,name,type,workout_date&id=eq.${encodeURIComponent(workoutId)}`
+      `/workouts?select=id,name,type,workout_date,state&id=eq.${encodeURIComponent(workoutId)}`
     );
     const w = Array.isArray(workoutArr) ? workoutArr[0] : workoutArr;
     if (!w) throw new Error('האימון לא נמצא.');
 
-    wNameEl.value = w.name || '';
-    wTypeEl.value = w.type || 'אימון ליבה';
-    wDateEl.value = w.workout_date || '';
+    wNameEl.value  = w.name || '';
+    wTypeEl.value  = w.type || 'אימון ליבה';
+    wDateEl.value  = w.workout_date || '';
+    wStateEl.value = w.state || 'מתוכנן';
 
     // 2) טען תרגילים
     const { data: exRows } = await http.get(
@@ -74,12 +84,11 @@ function renderExercises(rows) {
   }
 }
 
-// בונה <tr> לתרגיל קיים/חדש
+// בונה זוג שורות לתרגיל
 function buildRow(ex = {}) {
-  // שתי שורות לכל תרגיל
   const trTop = document.createElement('tr');
   trTop.dataset.part = 'top';
-  trTop.dataset.id = ex.id || ''; // ריק לשורה חדשה
+  trTop.dataset.id = ex.id || '';
 
   const trBottom = document.createElement('tr');
   trBottom.dataset.part = 'bottom';
@@ -87,10 +96,9 @@ function buildRow(ex = {}) {
   // ====== תא מזהה (rowspan=2) ======
   const tdId = document.createElement('td');
   tdId.textContent = ex.id ?? '—';
-  tdId.rowSpan = 2; // עוטף את שתי השורות
+  tdId.rowSpan = 2;
 
-  // ====== שורה עליונה: שם HE, שם EN, אזור גוף, חזרות/עומס, קישור לגיף, מחיקה ======
-
+  // ====== שורה עליונה ======
   // שם (עברית)
   const tdHe = document.createElement('td');
   const taHe = document.createElement('textarea');
@@ -102,7 +110,7 @@ function buildRow(ex = {}) {
   taHe.value = ex.name_he || '';
   tdHe.appendChild(taHe);
 
-  // שם (אנגלית)
+  // שם (אנגלית) LTR
   const tdEn = document.createElement('td');
   const taEn = document.createElement('textarea');
   taEn.className = 'form-control';
@@ -163,7 +171,7 @@ function buildRow(ex = {}) {
 
   tdGif.append(linkBtn, inGif);
 
-  // מחיקה (תמחק את שתי השורות)
+  // מחיקה
   const tdDel = document.createElement('td');
   const btnDel = document.createElement('button');
   btnDel.type = 'button';
@@ -181,7 +189,6 @@ function buildRow(ex = {}) {
   trTop.append(tdId, tdHe, tdEn, tdArea, tdReps, tdGif, tdDel);
 
   // ====== שורה תחתונה: תצוגת גיף + הנחיות ביצוע ======
-  // תצוגת גיף (colspan=2)
   const tdPreview = document.createElement('td');
   tdPreview.colSpan = 2;
   tdPreview.className = 'text-center';
@@ -216,7 +223,6 @@ function buildRow(ex = {}) {
   previewBox.appendChild(previewImg);
   tdPreview.appendChild(previewBox);
 
-  // הנחיות ביצוע (colspan=4)
   const tdInstr = document.createElement('td');
   tdInstr.colSpan = 4;
   const taInstr = document.createElement('textarea');
@@ -225,31 +231,24 @@ function buildRow(ex = {}) {
   taInstr.value = ex.instructions || '';
   tdInstr.appendChild(taInstr);
 
-  // הרכבת השורה התחתונה
   trBottom.append(tdPreview, tdInstr);
 
-  // נחזיר שתי שורות (כ־DocumentFragment נוח להחזרה אחת)
   const frag = document.createDocumentFragment();
   frag.append(trTop, trBottom);
   return frag;
 }
 
-
 // הוספת שורה ריקה
-function appendEmptyRow() {
-  exBody.appendChild(buildRow({}));
-}
+function appendEmptyRow() { exBody.appendChild(buildRow({})); }
 
 // ---- איסוף נתונים מהטבלה ----
 function collectRows() {
   const rows = [];
-
   for (const trTop of exBody.querySelectorAll('tr[data-part="top"]')) {
-    const trBottom = trTop.nextElementSibling; // השורה השנייה של אותו תרגיל
+    const trBottom = trTop.nextElementSibling;
     const hasId = !!trTop.dataset.id;
 
-    const [tdId, tdHe, tdEn, tdArea, tdReps, tdGif, tdDel] = trTop.children;
-    // בשורה התחתונה יש רק שני תאים: תצוגת גיף, הנחיות
+    const [tdId, tdHe, tdEn, tdArea, tdReps, tdGif] = trTop.children;
     const [tdPreview, tdInstr] = trBottom.children;
 
     const row = {
@@ -258,29 +257,35 @@ function collectRows() {
       name_en: tdEn.querySelector('textarea').value.trim(),
       body_area: tdArea.querySelector('textarea').value.trim(),
       reps_load: tdReps.querySelector('textarea').value.trim(),
-      instructions: tdInstr.querySelector('textarea').value, // משורה תחתונה
+      instructions: tdInstr.querySelector('textarea').value,
       gif_url: tdGif.querySelector('input').value.trim()
     };
 
     if (hasId) row.id = Number(trTop.dataset.id);
     rows.push(row);
   }
-
   return rows;
 }
-
-
 
 // ---- שמירה ----
 async function saveAll() {
   clearLog(logEl);
   setBusy(true);
   try {
+    // אם סטטוס "בוצע" ואין תאריך — נמלא תאריך של היום (כדי לעמוד ב-CHECK במסד)
+    let dateVal = wDateEl.value ? wDateEl.value : null;
+    const stateVal = wStateEl.value || 'מתוכנן';
+    if (stateVal === 'בוצע' && !dateVal) {
+      dateVal = todayISO();
+      wDateEl.value = dateVal; // עדכון UI
+    }
+
     // 1) עדכון כותרת אימון
     const wPayload = {
       name: wNameEl.value.trim() || null,
       type: wTypeEl.value || null,
-      workout_date: wDateEl.value ? wDateEl.value : null
+      workout_date: dateVal,
+      state: stateVal
     };
     await http.patch(`/workouts?id=eq.${encodeURIComponent(workoutId)}`, wPayload);
 
@@ -320,16 +325,14 @@ async function saveAll() {
     await reloadExercises();
     alert('נשמר בהצלחה.');
   } catch (err) {
-    //showError(err, logEl);
-      // שגיאת שרת מפורטת ל־log
-  const msg = err?.response?.data?.message || err?.message || String(err);
-  const details = err?.response?.data?.details || '';
-  const hint = err?.response?.data?.hint || '';
-  showError(`${msg}${details ? ' | ' + details : ''}${hint ? ' | ' + hint : ''}`, logEl);
-  console.error('Insert/Update error payload:', {
-    status: err?.response?.status,
-    data: err?.response?.data,
-  });
+    const msg = err?.response?.data?.message || err?.message || String(err);
+    const details = err?.response?.data?.details || '';
+    const hint = err?.response?.data?.hint || '';
+    showError(`${msg}${details ? ' | ' + details : ''}${hint ? ' | ' + hint : ''}`, logEl);
+    console.error('Insert/Update error payload:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+    });
     alert('שמירה נכשלה. ראה פירוט בלוג.');
   } finally {
     setBusy(false);
@@ -374,6 +377,13 @@ function setBusy(busy) {
   addRowBtn.disabled = busy;
 }
 function disableAll() { setBusy(true); }
+
+// אם משנים ל"בוצע" ואין תאריך — נמלא אוטומטית "היום" (שומר UX עקבי עם השמירה)
+wStateEl.addEventListener('change', () => {
+  if (wStateEl.value === 'בוצע' && !wDateEl.value) {
+    wDateEl.value = todayISO();
+  }
+});
 
 // ---- מאזינים ----
 saveBtn.addEventListener('click', (e) => { e.preventDefault(); saveAll(); });
